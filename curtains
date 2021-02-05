@@ -1,0 +1,223 @@
+esphome:
+  name: cutrains
+  platform: ESP8266
+  board: d1_mini
+  on_boot:
+    priority: -100
+    then:
+      - stepper.report_position:
+          id: blind_stepper
+          position: !lambda "return id(current_position);"
+      - stepper.set_target:
+          id: blind_stepper
+          target: !lambda "return id(current_position);"
+      - stepper.set_speed:
+          id: blind_stepper
+          speed: 450 steps/s
+      - sensor.template.publish:
+          id: c_position
+          state: !lambda 'return ((float(id(blind_stepper).current_position) / float(id(open_position))) *100 );'          
+      - cover.template.publish:
+          id: gameroom_blind
+          current_operation: IDLE
+          position: !lambda 'return (float(float(id(blind_stepper).current_position) / float(id(open_position))));'
+      - output.turn_on: builtin_led
+      
+  esp8266_restore_from_flash: true
+
+wifi:
+  ssid: "SSID"
+  password: "SSIDpassword"
+
+captive_portal:
+
+
+web_server:
+  port: 80
+
+# Enable logging
+logger:
+
+ota:
+  password: "password"
+
+# Enable Home Assistant API
+api:
+  password: "password"
+  services:
+    - service: control_stepper
+      variables:
+        target: int
+      then:
+        - stepper.set_target:
+            id: blind_stepper
+            target: !lambda 'return target;'
+        - globals.set:
+            id: current_position
+            value: !lambda 'return target;'
+        - output.turn_on: builtin_led
+    - service: set_speed
+      variables:
+        speed: int
+      then:
+        - stepper.set_speed:
+            id: blind_stepper
+            speed: !lambda 'return speed;'
+    - service: middle
+      then:
+        - stepper.set_speed:
+            id: blind_stepper
+            speed: !lambda |-
+              if (id(middle_position) >= id(blind_stepper).current_position) {
+                return 500;
+              } else {
+                return 800;
+              }
+        - stepper.set_target:
+            id: blind_stepper
+            target: !lambda 'return id(middle_position);'
+        - while:
+            condition:
+              lambda: |-
+                return id(blind_stepper).current_position != id(middle_position);
+            then:
+              - cover.template.publish:
+                  id: gameroom_blind
+                  current_operation: !lambda |-
+                      if(id(middle_position) >= id(blind_stepper).current_position) {
+                        return COVER_OPERATION_OPENING;
+                      } else {
+                        return COVER_OPERATION_CLOSING;
+                      }
+                  position: !lambda 'return (float(float(id(blind_stepper).current_position) / float(id(open_position))));'
+              - delay: 2000 ms
+        - cover.template.publish:
+            id: gameroom_blind
+            current_operation: IDLE
+            position: !lambda 'return (float(float(id(blind_stepper).current_position) / float(id(open_position))));'
+        - globals.set:
+            id: current_position
+            value: !lambda 'return id(middle_position);'
+        - output.turn_on: builtin_led
+
+globals:
+  - id: open_position
+    type: int
+    initial_value: '9400'
+  - id: middle_position
+    type: int
+    initial_value: '3760'
+  - id: current_position
+    type: int
+    initial_value: '9400'
+    restore_value: true
+
+output:
+  - platform: gpio
+    pin: GPIO2
+    id: builtin_led
+
+
+stepper:
+  - platform: a4988
+    id: blind_stepper
+    step_pin: D3
+    dir_pin: D2
+    max_speed: 450 steps/s
+    sleep_pin: D4
+    acceleration: inf
+    deceleration: inf
+
+
+sensor:
+  - platform: template
+    name: "Position"
+    id: c_position
+  
+cover:
+  - platform: template
+    device_class: shade
+    name: GameRoom Blind
+    id: gameroom_blind
+    open_action:
+      - stepper.set_speed:
+          id: blind_stepper
+          speed: 450 steps/s
+
+
+
+      - stepper.set_target:
+          id: blind_stepper
+          target: !lambda "return id(open_position);"
+      - while:
+          condition:
+            lambda: |-
+              return id(gameroom_blind).position != 1;
+          then:
+            - sensor.template.publish:
+                id: c_position
+                state: !lambda 'return ((float(id(blind_stepper).current_position) / float(id(open_position))) *100 );'
+            - cover.template.publish:
+                id: gameroom_blind
+                current_operation: !lambda |-
+                    return COVER_OPERATION_OPENING;
+                position: !lambda 'return (float(float(id(blind_stepper).current_position) / float(id(open_position))));'
+            - delay: 2000 ms
+      - cover.template.publish:
+          id: gameroom_blind
+          current_operation: IDLE
+          position: !lambda 'return 1;'
+      - globals.set:
+          id: current_position
+          value: !lambda 'return id(open_position);'
+      - output.turn_on: builtin_led
+    close_action:
+      - stepper.set_speed:
+          id: blind_stepper
+          speed: 450 steps/s
+
+
+
+      - stepper.set_target:
+          id: blind_stepper
+          target: 0
+      - while:
+          condition:
+            lambda: |-
+              return id(gameroom_blind).position != 0;
+          then:
+            - sensor.template.publish:
+                id: c_position
+                state: !lambda 'return ((float(id(blind_stepper).current_position) / float(id(open_position))) *100 );'
+            - cover.template.publish:
+                id: gameroom_blind
+                current_operation: !lambda |-
+                    return COVER_OPERATION_CLOSING;
+                position: !lambda 'return (float(float(id(blind_stepper).current_position) / float(id(open_position))));'
+            - delay: 2000 ms
+      - cover.template.publish:
+          id: gameroom_blind
+          current_operation: IDLE
+          position: !lambda 'return 0;'
+      - globals.set:
+          id: current_position
+          value: !lambda 'return 0;'
+      - output.turn_on: builtin_led
+    stop_action:
+      - stepper.set_target:
+          id: blind_stepper
+          target: !lambda return id(blind_stepper).current_position;
+
+      - sensor.template.publish:
+          id: c_position
+          state: !lambda 'return ((float(id(blind_stepper).current_position) / float(id(open_position))) *100 );'
+
+      - cover.template.publish:
+          id: gameroom_blind
+          current_operation: IDLE
+          position: !lambda 'return (float(float(id(blind_stepper).current_position) / float(id(open_position))));'
+      - globals.set:
+          id: current_position
+          value: !lambda 'return id(blind_stepper).current_position;'
+      - output.turn_on: builtin_led
+    has_position: true
